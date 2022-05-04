@@ -1,0 +1,37 @@
+pipeline {
+    agent any
+    parameters {
+        string(name: 'Environment', defaultValue: 'latest_sv4s', description: 'Environment on which np.test and np.tartest should be published')
+    }
+    stages {
+        stage('Setting up virtual environment') {
+            steps {
+                sh '''
+                    echo $PATH
+                    pip install -U --extra-index-url "https://pypi.python.org/simple" virtualenv
+                    if [ ! -d "venv" ]; then
+                        echo "No virtual environment exists. Creating one..."
+                        virtualenv venv
+                    fi
+                    . venv/bin/activate
+                    pip install -U --extra-index-url "https://pypi.python.org/simple" setuptools
+                    pip install --extra-index-url "https://pypi.python.org/simple" -r integration/requirements.txt
+                '''
+            }
+        }
+        stage('Publishing test titles') {
+            steps {
+                sh '''
+                    . venv/bin/activate
+                    export PYTHONPATH="${PYTHONPATH}:."
+                    python integration/tests/setup.py --environment=integration/environments/env_$Environment.yaml
+                '''
+            }
+        }
+    }
+    post {
+        always {
+            cleanWs()
+        }
+    }
+}

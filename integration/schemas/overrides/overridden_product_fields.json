@@ -1,0 +1,191 @@
+{
+  "$schema": "http://json-schema.org/draft-04/schema#",
+  "definitions": {},
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "original_price",
+    "rewards",
+    "product_id",
+    "purchasable",
+    "friendly_name",
+    "price",
+    "tags",
+    "title_code",
+    "visible",
+    "payment_group",
+    "entitlements",
+    "product_code",
+    "coupons",
+    "language",
+    "metadata"
+  ],
+  "properties": {
+    "original_price": {
+      "type": "object"
+    },
+    "rewards": {
+      "type": "array"
+    },
+    "product_id": {
+      "type": "string"
+    },
+    "purchasable": {
+      "type": "boolean",
+      "enum": [
+        true
+      ]
+    },
+    "friendly_name": {
+      "type": "string",
+      "enum": [
+        "overridden_name"
+      ]
+    },
+    "price": {
+      "type": "object"
+    },
+    "tags": {
+      "type": "array",
+      "items": [
+        {
+          "type": "string",
+          "enum": [
+            "foo",
+            "bar"
+          ]
+        }
+      ]
+    },
+    "title_code": {
+      "type": "string"
+    },
+    "visible": {
+      "type": "boolean",
+      "enum": [
+        true
+      ]
+    },
+    "payment_group": {
+      "type": "array",
+      "items": [
+        {
+          "type": "string",
+          "enum": [
+            "payment",
+            "group"
+          ]
+        }
+      ]
+    },
+    "entitlements": {
+      "type": "array",
+      "items": [
+        {
+          "type": "object",
+          "required": [
+            "amount",
+            "code",
+            "expiration"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "amount": {
+              "type": "integer",
+              "enum": [
+                1
+              ]
+            },
+            "code": {
+              "type": "string",
+              "enum": [
+                "test_entitlement_default"
+              ]
+            },
+            "expiration": {
+              "type": "string",
+              "enum": [
+                "0"
+              ]
+            }
+          }
+        }
+      ]
+    },
+    "product_code": {
+      "type": "string",
+      "enum": [
+        "test_override_product"
+      ]
+    },
+    "coupons": {
+      "type": "array"
+    },
+    "language": {
+      "type": "string"
+    },
+    "metadata": {
+      "type": "object",
+      "required": [
+        "pss",
+        "test_namespace"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "pss": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {}
+        },
+        "test_namespace": {
+          "type": "object",
+          "required": [
+            "added_string",
+            "original_string"
+          ],
+          "additionalProperties": false,
+          "properties": {
+            "added_string": {
+              "type": "object",
+              "required": [
+                "data",
+                "@type"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "data": {
+                  "type": "string"
+                },
+                "@type": {
+                  "type": "string",
+                  "enum": [
+                    "String"
+                  ]
+                }
+              }
+            },
+            "original_string": {
+              "type": "object",
+              "required": [
+                "data",
+                "@type"
+              ],
+              "additionalProperties": false,
+              "properties": {
+                "data": {
+                  "type": "string"
+                },
+                "@type": {
+                  "type": "string",
+                  "enum": [
+                    "String"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

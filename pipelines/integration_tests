@@ -1,0 +1,68 @@
+pipeline {
+    agent any
+    environment {
+        AWS_ACCESS_KEY_ID='AWS KEY'
+        AWS_SECRET_ACCESS_KEY='AWS SECRet keY'
+    }
+    parameters {
+        string(name: 'Environment', defaultValue:'latest_sv4s', description: 'Environment on which np.test and np.tartest should be published')
+    }
+    stages {
+        stage('Publish titles') {
+            steps {
+                echo 'Publishing...'
+                build job: 'import-and-publish', parameters: [[$class: 'StringParameterValue', name: 'Environment', value: env.Environment]]
+            }
+        }
+        stage('Setting up virtual environment') {
+            steps{
+                sh '''
+                    pip install -U --extra-index-url "https://pypi.python.org/simple" virtualenv
+                    if [ ! -d "venv" ]; then
+                        echo "No virtual environment exists. Creating one..."
+                        virtualenv venv
+                    fi
+                    . venv/bin/activate
+                    pip install -U --extra-index-url "https://pypi.python.org/simple" setuptools
+                    pip install --extra-index-url "https://pypi.python.org/simple" -r integration/requirements.txt
+                '''
+            }
+        }
+        stage('Running tests...') {
+            steps {
+                parallel (
+                    Auth: {
+                        sh '''
+                            . venv/bin/activate
+                            pytest integration/tests/gateway_integration/auth  --reruns 1 --reruns-delay 1 --environment=integration/environments/env_$Environment.yaml --alluredir integration/results/allure-results-auth
+                        '''
+                    },
+                    Functional: {
+                        sh '''
+                            . venv/bin/activate
+                            pytest integration/tests/gateway_integration/functional  --reruns 1 --reruns-delay 1 --environment=integration/environments/env_$Environment.yaml --alluredir integration/results/allure-results-functional
+                        '''
+                    },
+                    Server: {
+                        sh '''
+                            . venv/bin/activate
+                            pytest integration/tests/gateway_integration/server  --reruns 1 --reruns-delay 1 --environment=integration/environments/env_$Environment.yaml --alluredir integration/results/allure-results-server --allure_severities=blocker,critical
+                        '''
+                    },
+                    Tools: {
+                        sh '''
+                            . venv/bin/activate
+                            pytest integration/tests/gateway_integration/tools  --reruns 1 --reruns-delay 1 --environment=integration/environments/env_$Environment.yaml --alluredir integration/results/allure-results-tools --allure_severities=blocker,critical
+                        '''
+                    }
+                )
+            }
+        }
+    }
+    post {
+        always {
+            allure includeProperties: false, jdk: '', results: [[path: 'integration/results/allure-results-auth'],[path: 'integration/results/allure-results-functional'],[path: 'integration/results/allure-results-server'],[path: 'integration/results/allure-results-tools']]
+            cleanWs()
+        }
+    }
+}

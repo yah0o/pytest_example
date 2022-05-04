@@ -1,0 +1,46 @@
+TEST_STUDIO:
+  CODE: test_studio
+  FRIENDLY_NAME: Test Studio
+
+TEST_TITLE:
+  CODE: us.npint
+  FRIENDLY_NAME: Network Platform Integration Test Title
+
+TEST_CATALOG:
+  CODE: test_catalog
+  FRIENDLY_NAME: Test Catalog
+
+TEST_STOREFRONT:
+  CODE: test_empty_storefront
+  FRIENDLY_NAME: Test Empty Storefront
+
+TEST_ONE_PRODUCT_STOREFRONT:
+  CODE: test_one_product_storefront
+  FRIENDLY_NAME: Test One Product Storefront
+
+TEST_PRODUCT:
+  CODE: test_empty_product
+  FRIENDLY_NAME: Test Empty Product
+
+TEST_PRODUCT_FULL:
+  CODE: test_product_full
+  FRIENDLY_NAME: Test Product with Currency and Entitlement
+
+TEST_ENTITLEMENT:
+  CODE: test_entitlement
+  FRIENDLY_NAME: Test Entitlement
+
+TEST_ENTITLEMENT_2:
+  CODE: test_entitlement_2
+  FRIENDLY_NAME: Test Entitlement 2
+
+TEST_CURRENCY:
+  CODE: test_currency
+  FRIENDLY_NAME: Test Currency
+
+XP:
+  CODE: xp
+  FRIENDLY_NAME: Test XP
+
+TEST_PLAYER:
+  NAME: test_player

@@ -1,0 +1,1393 @@
+import uuid
+
+import pytest
+from allure import severity_level
+from hamcrest import assert_that, has_key, has_length, not_none, equal_to, none, \
+    greater_than, is_not, empty
+
+from integration.main.helpers import WaitOn, InventoryUtilities, TitleUtilities, ReturnValue, PurchaseUtil, \
+    RequestBuilder
+from integration.main.services import LegacyProductItem, CurrencyItem, PurchaseProductItem, ConsulManager
+
+
+@pytest.allure.feature('functional')
+@pytest.allure.severity(severity_level.BLOCKER)
+class TestBlockerProduct(object):
+
+    @pytest.fixture
+    def clean_up_inventory(self, config):
+        yield
+
+        get_inventory_response = config.freya.server_gateway.get_full_inventory(config.environment['us_wgid'])
+
+        for currency in get_inventory_response.content['body']['profile']['currencies']:
+            consume_currency_response = config.freya.server_gateway.consume_currency(
+                str(uuid.uuid4()),
+                config.environment['us_wgid'],
+                currency['code'],
+                currency['amount']
+            )
+            consume_currency_response.assert_is_success()
+
+        for entitlement in get_inventory_response.content['body']['profile']['entitlements']:
+            # decrease premium amount to prevent insufficient_funds error
+            if entitlement['code'] == config.data.PREMIUM_BLOCKER_RM.PREMIUM_ENTITLEMENT.CODE:
+                pass
+            else:
+                consume_entitlement_response = config.freya.server_gateway.consume_entitlement(
+                    config.environment['us_wgid'],
+                    entitlement['code'],
+                    entitlement['amount'],
+                    tx_id=str(uuid.uuid4())
+                )
+                consume_entitlement_response.assert_is_success()
+
+        title_response = config.freya.title_config.get_titles(config.environment['shared_currency'])
+        shared_currency_api = str(title_response[0]['title_versions'][0]['server_api_key'])
+
+        get_shared_currency_inventory_response = config.freya.server_gateway(shared_currency_api).get_full_inventory(
+            config.environment['us_wgid']
+        )
+
+        for currency in get_shared_currency_inventory_response.content['body']['profile']['currencies']:
+            consume_currency_response = config.freya.server_gateway(shared_currency_api).consume_currency(
+                str(uuid.uuid4()),
+                config.environment['us_wgid'],
+                currency['code'],
+                currency['amount']
+            )
+            consume_currency_response.assert_is_success()
+
+    @pytest.fixture
+    def calculate_ar_cost(self, config):
+        config.log.info('Make sure that coefficient is enabled')
+
+        consul = ConsulManager(config.environment.consul, config.environment.environment_name)
+        enabled_response = consul.get_kv('{}/product-price-coefficients/coefficients.enabled'.format(
+            config.environment.environment_name
+        ))
+        enabled = enabled_response.content
+
+        if type(enabled) is not str or not enabled:
+            config.log.info('Enabled on {} is {}'.format(
+                config.environment.environment_name,
+                enabled
+            ))
+            pytest.skip('Coefficient is not enabled')
+
+        config.log.info('Get the Coefficient for AR')
+
+        coefficient_response = consul.get_kv('{}/product-price-coefficients/AR'.format(
+            config.environment.environment_name
+        ))
+        coefficient_response.assert_is_success()
+        coefficient = coefficient_response.content
+
+        config.log.info('Coefficient on {} for AR is {}'.format(
+            config.environment.environment_name,
+            coefficient
+        ))
+
+        config.log.info('Get the CES for US to AR')
+
+        ces_response = config.freya.product_service.get_ces_data()
+        ces_response.assert_is_success()
+
+        ces_data = ces_response.content[config.data.PREMIUM_BLOCKER_RM.US.CODE]
+        assert_that(ces_data, has_key('quotes'))
+        assert_that(ces_data['quotes'], has_key(config.data.PREMIUM_BLOCKER_RM.AR.CODE))
+
+        ar_ces = ces_data['quotes'][config.data.PREMIUM_BLOCKER_RM.AR.CODE]
+        assert_that(ar_ces, has_key('value'))
+        ar_ces_value = float(ar_ces['value'])
+
+        config.log.info('CES for AR is {}'.format(ar_ces_value))
+
+        converted_cost = round(config.data.PREMIUM_BLOCKER_RM.US.ORIGINAL_AMOUNT * ar_ces_value, 0)
+
+        config.store.ar_cost = int(round(converted_cost * coefficient, 0))
+
+        config.log.info('Calculated ARS converted cost is {} {}'.format(
+            config.store.ar_cost,
+            config.data.PREMIUM_BLOCKER_RM.AR.CODE
+        ))
+
+    @pytest.allure.story('fetch products')
+    def test_fetch_products_should_succeed_when_premium_product_have_vc_price_and_compensation(self, config):
+        fetch_product = config.freya.server_gateway.fetch_products(
+            [config.data.PREMIUM_BLOCKER_VC.CODE],
+            config.environment['us_wgid'],
+            config.data.PREMIUM_BLOCKER_VC.COUNTRY,
+            config.data.PREMIUM_BLOCKER_VC.LANGUAGE
+        )
+        fetch_product.assert_is_success()
+
+        assert_that(fetch_product.content['body'], has_key('uriList'))
+        assert_that(fetch_product.content['body']['uriList'], has_length(1))
+        uri = fetch_product.content['body']['uriList'][0]
+
+        product_response = RequestBuilder(uri).get()
+        product_response.assert_is_success()
+
+        assert_that(product_response.content, has_key('entitlements'))
+
+        entitlement = next(
+            (
+                entitlement for entitlement in product_response.content['entitlements']
+                if entitlement['code'] == config.data.PREMIUM_BLOCKER_VC.ENTITLEMENTS.CODE
+            ),
+            None
+        )
+        assert_that(entitlement, not_none())
+
+        assert_that(entitlement, has_key('compensation'))
+        compensation = entitlement['compensation']
+
+        assert_that(compensation, has_key('code'))
+        assert_that(compensation['code'], equal_to(config.data.PREMIUM_BLOCKER_VC.COMPENSATION.CODE))
+        assert_that(compensation, has_key('amount'))
+        assert_that(compensation['amount'], equal_to(config.data.PREMIUM_BLOCKER_VC.COMPENSATION.AMOUNT))
+
+    @pytest.allure.story('fetch product list')
+    def test_fetch_product_list_should_succeed_when_premium_product_have_vc_price_and_comp_with_pct_pro_disc(
+            self,
+            config
+    ):
+        fetch_product = config.freya.server_gateway.fetch_product_list(
+            config.data.PREMIUM_BLOCKER_VC.STOREFRONT,
+            config.environment['us_wgid'],
+            config.data.PREMIUM_BLOCKER_VC.COUNTRY,
+            config.data.PREMIUM_BLOCKER_VC.LANGUAGE
+        )
+        fetch_product.assert_is_success()
+
+        assert_that(fetch_product.content['body'], has_key('uriList'))
+        assert_that(fetch_product.content['body']['uriList'], not_none())
+        uri_list = fetch_product.content['body']['uriList']
+
+        product = next(
+            (
+                product for product in PurchaseUtil.get_product_infos(uri_list)
+                if product['product_code'] == config.data.PREMIUM_BLOCKER_VC.CODE
+            ),
+            None
+        )
+        assert_that(product, not_none())
+
+        assert_that(product, has_key('entitlements'))
+
+        entitlement = next(
+            (
+                entitlement for entitlement in product['entitlements']
+                if entitlement['code'] == config.data.PREMIUM_BLOCKER_VC.ENTITLEMENTS.CODE
+            ),
+            None
+        )
+        assert_that(entitlement, not_none())
+
+        assert_that(entitlement, has_key('compensation'))
+        compensation = entitlement['compensation']
+
+        assert_that(compensation, has_key('code'))
+        assert_that(compensation['code'], equal_to(config.data.PREMIUM_BLOCKER_VC.COMPENSATION.CODE))
+        assert_that(compensation, has_key('amount'))
+        assert_that(compensation['amount'], equal_to(config.data.PREMIUM_BLOCKER_VC.COMPENSATION.DISCOUNTED_AMOUNT))
+
+    @pytest.mark.skip_for_regions('ct')
+    @pytest.allure.story('fetch products')
+    def test_fetch_products_should_succeed_when_premium_product_have_rm_price_and_compensation(self, config):
+        fetch_product = config.freya.server_gateway.fetch_products(
+            [config.data.PREMIUM_BLOCKER_RM.CODE],
+            config.environment['us_wgid'],
+            config.data.PREMIUM_BLOCKER_RM.US.COUNTRY,
+            config.data.PREMIUM_BLOCKER_RM.LANGUAGE
+        )
+        fetch_product.assert_is_success()
+
+        assert_that(fetch_product.content['body'], has_key('uriList'))
+        assert_that(fetch_product.content['body']['uriList'], has_length(1))
+        uri = fetch_product.content['body']['uriList'][0]
+
+        product_response = RequestBuilder(uri).get()
+        product_response.assert_is_success()
+
+        assert_that(product_response.content, has_key('entitlements'))
+
+        entitlement = next(
+            (
+                entitlement for entitlement in product_response.content['entitlements']
+                if entitlement['code'] == config.data.PREMIUM_BLOCKER_RM.ENTITLEMENTS.CODE
+            ),
+            None
+        )
+        assert_that(entitlement, not_none())
+
+        assert_that(entitlement, has_key('compensation'))
+        compensation = entitlement['compensation']
+
+        assert_that(compensation, has_key('code'))
+        assert_that(compensation['code'], equal_to(config.data.PREMIUM_BLOCKER_RM.COMPENSATION.CODE))
+        assert_that(compensation, has_key('amount'))
+        assert_that(compensation['amount'], equal_to(config.data.PREMIUM_BLOCKER_RM.COMPENSATION.AMOUNT))
+
+    @pytest.mark.skip_for_regions('ct')
+    @pytest.allure.story('fetch product list')
+    def test_fetch_product_list_should_succeed_when_premium_product_have_rm_price_and_comp_with_pct_pro_disc(
+            self,
+            config
+    ):
+        fetch_product = config.freya.server_gateway.fetch_product_list(
+            config.data.PREMIUM_BLOCKER_RM.STOREFRONT,
+            config.environment['us_wgid'],
+            config.data.PREMIUM_BLOCKER_RM.US.COUNTRY,
+            config.data.PREMIUM_BLOCKER_RM.LANGUAGE
+        )
+        fetch_product.assert_is_success()
+
+        assert_that(fetch_product.content['body'], has_key('uriList'))
+        assert_that(fetch_product.content['body']['uriList'], not_none())
+        uri_list = fetch_product.content['body']['uriList']
+
+        product = next(
+            (
+                product for product in PurchaseUtil.get_product_infos(uri_list)
+                if product['product_code'] == config.data.PREMIUM_BLOCKER_RM.CODE
+            ),
+            None
+        )
+        assert_that(product, not_none())
+
+        assert_that(product, has_key('entitlements'))
+
+        entitlement = next(
+            (
+                entitlement for entitlement in product['entitlements']
+                if entitlement['code'] == config.data.PREMIUM_BLOCKER_RM.ENTITLEMENTS.CODE
+            ),
+            None
+        )
+        assert_that(entitlement, not_none())
+
+        assert_that(entitlement, has_key('compensation'))
+        compensation = entitlement['compensation']
+
+        assert_that(compensation, has_key('code'))
+        assert_that(compensation['code'], equal_to(config.data.PREMIUM_BLOCKER_RM.COMPENSATION.CODE))
+        assert_that(compensation, has_key('amount'))
+        assert_that(compensation['amount'], equal_to(config.data.PREMIUM_BLOCKER_RM.COMPENSATION.DISCOUNTED_AMOUNT))
+
+    @pytest.mark.skip_for_regions('ct')
+    @pytest.allure.story('fetch products')
+    def test_fetch_products_should_succeed_when_premium_product_have_variable_price(self, config):
+        fetch_product = config.freya.server_gateway.fetch_products(
+            [config.data.PREMIUM_BLOCKER_VARIABLE_PRICE.CODE],
+            config.environment['us_wgid'],
+            config.data.PREMIUM_BLOCKER_VARIABLE_PRICE.COUNTRY,
+            config.data.PREMIUM_BLOCKER_VARIABLE_PRICE.LANGUAGE
+        )
+        fetch_product.assert_is_success()
+
+        assert_that(fetch_product.content['body'], has_key('uriList'))
+        assert_that(fetch_product.content['body']['uriList'], has_length(1))
+        uri = fetch_product.content['body']['uriList'][0]
+
+        product_response = RequestBuilder(uri).get()
+        product_response.assert_is_success()
+
+        assert_that(product_response.content, has_key('currencies'))
+        assert_that(product_response.content['currencies'], has_length(greater_than(0)))
+
+        currency = next(
+            (
+                currency for currency in product_response.content['currencies']
+                if currency['code'] == config.data.PREMIUM_BLOCKER_VARIABLE_PRICE.VIRTUAL_CURRENCIES.GOLD.CODE
+            ),
+            None
+        )
+        assert_that(currency, not_none())
+        assert_that(currency, has_key('amount'))
+        assert_that(
+            currency['amount'],
+            equal_to(str(config.data.PREMIUM_BLOCKER_VARIABLE_PRICE.VIRTUAL_CURRENCIES.GOLD.AMOUNT))
+        )
+
+    @pytest.mark.skip(reason='FREYA-1166')
+    @pytest.mark.skip_for_regions('union')
+    # Union: ORDO Error
+    @pytest.allure.story('grant product')
+    @pytest.mark.notthreadsafe
+    def test_grant_product_should_succeed_when_premium_product_have_vc_price(self, config, clean_up_inventory):
+        grant_response = config.freya.server_gateway.grant_product(
+            str(uuid.uuid4()),
+            config.data.PREMIUM_BLOCKER_VC.COUNTRY,
+            config.data.PREMIUM_BLOCKER_VC.LANGUAGE,
+            config.environment['us_wgid'],
+            [LegacyProductItem(
+                config.data.PREMIUM_BLOCKER_VC.CODE,
+                config.data.PREMIUM_BLOCKER_VC.AMOUNT
+            )]
+        )
+        grant_response.assert_is_success()
+
+        waiter = WaitOn(lambda: InventoryUtilities.inventory_has(
+            config.freya.server_gateway,
+            config.log,
+            config.environment['us_wgid'],
+            to_check_currencies={
+                config.data.PREMIUM_BLOCKER_VC.VIRTUAL_CURRENCIES.TEST_CURRENCY.CODE:
+                    config.data.PREMIUM_BLOCKER_VC.VIRTUAL_CURRENCIES.TEST_CURRENCY.AMOUNT
+            },
+            to_check_entitlements={
+                config.data.PREMIUM_BLOCKER_VC.ENTITLEMENTS.CODE:
+                    config.data.PREMIUM_BLOCKER_VC.ENTITLEMENTS.AMOUNT
+            }
+        )).until(ReturnValue.EQUAL_TO(True), timeout=30)
+
+        waiter.wait('Did not get {} {} or {} {}\n{}'.format(
+            config.data.PREMIUM_BLOCKER_VC.VIRTUAL_CURRENCIES.TEST_CURRENCY.AMOUNT,
+            config.data.PREMIUM_BLOCKER_VC.VIRTUAL_CURRENCIES.TEST_CURRENCY.CODE,
+            config.data.PREMIUM_BLOCKER_VC.ENTITLEMENTS.AMOUNT,
+            config.data.PREMIUM_BLOCKER_VC.ENTITLEMENTS.CODE,
+            config.freya.server_gateway.get_full_inventory(config.environment['us_wgid']).details
+        ))
+
+        title_response = config.freya.title_config.get_titles(config.environment['shared_currency'])
+        shared_currency_api = str(title_response[0]['title_versions'][0]['server_api_key'])
+
+        shared_currency_waiter = WaitOn(lambda: InventoryUtilities.inventory_has(
+            config.freya.server_gateway(shared_currency_api),
+            config.log,
+            config.environment['us_wgid'],
+            to_check_currencies={
+                config.data.PREMIUM_BLOCKER_VC.VIRTUAL_CURRENCIES.GOLD.CODE:
+                    config.data.PREMIUM_BLOCKER_VC.VIRTUAL_CURRENCIES.GOLD.AMOUNT,
+                config.data.PREMIUM_BLOCKER_VC.VIRTUAL_CURRENCIES.FREE_XP.CODE:
+                    config.data.PREMIUM_BLOCKER_VC.VIRTUAL_CURRENCIES.FREE_XP.AMOUNT
+            },
+            to_check_entitlements={}
+        )).until(ReturnValue.EQUAL_TO(True), timeout=30)
+
+        shared_currency_waiter.wait('Did not get {} {}, or {} {}\n{}'.format(
+            config.data.PREMIUM_BLOCKER_VC.VIRTUAL_CURRENCIES.GOLD.AMOUNT,
+            config.data.PREMIUM_BLOCKER_VC.VIRTUAL_CURRENCIES.GOLD.CODE,
+            config.data.PREMIUM_BLOCKER_VC.VIRTUAL_CURRENCIES.FREE_XP.AMOUNT,
+            config.data.PREMIUM_BLOCKER_VC.VIRTUAL_CURRENCIES.FREE_XP.CODE,
+            config.freya.server_gateway(shared_currency_api).get_full_inventory(config.environment['us_wgid']).details
+        ))
+
+        get_inventory_response = config.freya.server_gateway.get_full_inventory(config.environment['us_wgid'])
+        entitlement = next(
+            (
+                entitlement for entitlement in get_inventory_response.content['body']['profile']['entitlements']
+                if entitlement['code'] == config.data.PREMIUM_BLOCKER_VC.PREMIUM_ENTITLEMENT.CODE
+            ),
+            None
+        )
+        assert_that(entitlement, not_none())
+
+    @pytest.mark.skip(reason='FREYA-1166')
+    @pytest.mark.skip_for_regions('union')
+    # Union: ORDO Error
+    @pytest.allure.story('grant product')
+    @pytest.mark.notthreadsafe
+    def test_grant_product_should_succeed_when_premium_product_have_rm_price(self, config, clean_up_inventory):
+        grant_response = config.freya.server_gateway.grant_product(
+            str(uuid.uuid4()),
+            config.data.PREMIUM_BLOCKER_RM.US.COUNTRY,
+            config.data.PREMIUM_BLOCKER_RM.LANGUAGE,
+            config.environment['us_wgid'],
+            [LegacyProductItem(
+                config.data.PREMIUM_BLOCKER_RM.CODE,
+                config.data.PREMIUM_BLOCKER_RM.AMOUNT
+            )]
+        )
+        grant_response.assert_is_success()
+
+        waiter = WaitOn(lambda: InventoryUtilities.inventory_has(
+            config.freya.server_gateway,
+            config.log,
+            config.environment['us_wgid'],
+            to_check_currencies={
+                config.data.PREMIUM_BLOCKER_RM.VIRTUAL_CURRENCIES.TEST_CURRENCY.CODE:
+                    config.data.PREMIUM_BLOCKER_RM.VIRTUAL_CURRENCIES.TEST_CURRENCY.AMOUNT
+            },
+            to_check_entitlements={
+                config.data.PREMIUM_BLOCKER_RM.ENTITLEMENTS.CODE:
+                    config.data.PREMIUM_BLOCKER_RM.ENTITLEMENTS.AMOUNT
+            }
+        )).until(ReturnValue.EQUAL_TO(True), timeout=30)
+
+        waiter.wait('Did not get {} {} or {} {}\n{}'.format(
+            config.data.PREMIUM_BLOCKER_RM.VIRTUAL_CURRENCIES.TEST_CURRENCY.AMOUNT,
+            config.data.PREMIUM_BLOCKER_RM.VIRTUAL_CURRENCIES.TEST_CURRENCY.CODE,
+            config.data.PREMIUM_BLOCKER_RM.ENTITLEMENTS.AMOUNT,
+            config.data.PREMIUM_BLOCKER_RM.ENTITLEMENTS.CODE,
+            config.freya.server_gateway.get_full_inventory(config.environment['us_wgid']).details
+        ))
+
+        title_response = config.freya.title_config.get_titles(config.environment['shared_currency'])
+        shared_currency_api = str(title_response[0]['title_versions'][0]['server_api_key'])
+
+        shared_currency_waiter = WaitOn(lambda: InventoryUtilities.inventory_has(
+            config.freya.server_gateway(shared_currency_api),
+            config.log,
+            config.environment['us_wgid'],
+            to_check_currencies={
+                config.data.PREMIUM_BLOCKER_RM.VIRTUAL_CURRENCIES.GOLD.CODE:
+                    config.data.PREMIUM_BLOCKER_RM.VIRTUAL_CURRENCIES.GOLD.AMOUNT,
+                config.data.PREMIUM_BLOCKER_RM.VIRTUAL_CURRENCIES.FREE_XP.CODE:
+                    config.data.PREMIUM_BLOCKER_RM.VIRTUAL_CURRENCIES.FREE_XP.AMOUNT
+            },
+            to_check_entitlements={}
+        )).until(ReturnValue.EQUAL_TO(True), timeout=30)
+
+        shared_currency_waiter.wait('Did not get {} {}, or {} {}\n{}'.format(
+            config.data.PREMIUM_BLOCKER_RM.VIRTUAL_CURRENCIES.GOLD.AMOUNT,
+            config.data.PREMIUM_BLOCKER_RM.VIRTUAL_CURRENCIES.GOLD.CODE,
+            config.data.PREMIUM_BLOCKER_RM.VIRTUAL_CURRENCIES.FREE_XP.AMOUNT,
+            config.data.PREMIUM_BLOCKER_RM.VIRTUAL_CURRENCIES.FREE_XP.CODE,
+            config.freya.server_gateway(shared_currency_api).get_full_inventory(config.environment['us_wgid']).details
+        ))
+
+        get_inventory_response = config.freya.server_gateway.get_full_inventory(config.environment['us_wgid'])
+        entitlement = next(
+            (
+                entitlement for entitlement in get_inventory_response.content['body']['profile']['entitlements']
+                if entitlement['code'] == config.data.PREMIUM_BLOCKER_RM.PREMIUM_ENTITLEMENT.CODE
+            ),
+            None
+        )
+        assert_that(entitlement, not_none())
+
+    @pytest.mark.skip(reason='FREYA-1166')
+    @pytest.mark.skip_for_regions('union')
+    # Union: ORDO Error
+    @pytest.allure.story('grant product')
+    @pytest.mark.notthreadsafe
+    def test_grant_product_should_succeed_when_premium_product_cost_variable_price(self, config, clean_up_inventory):
+        grant_response = config.freya.server_gateway.grant_product(
+            str(uuid.uuid4()),
+            config.data.PREMIUM_BLOCKER_VARIABLE_PRICE.COUNTRY,
+            config.data.PREMIUM_BLOCKER_VARIABLE_PRICE.LANGUAGE,
+            config.environment['us_wgid'],
+            [LegacyProductItem(
+                config.data.PREMIUM_BLOCKER_VARIABLE_PRICE.CODE,
+                config.data.PREMIUM_BLOCKER_VARIABLE_PRICE.AMOUNT
+            )]
+        )
+        grant_response.assert_is_success()
+
+        title_response = config.freya.title_config.get_titles(config.environment['shared_currency'])
+        shared_currency_api = str(title_response[0]['title_versions'][0]['server_api_key'])
+
+        waiter = WaitOn(lambda: InventoryUtilities.inventory_has(
+            config.freya.server_gateway(shared_currency_api),
+            config.log,
+            config.environment['us_wgid'],
+            to_check_currencies={
+                config.data.PREMIUM_BLOCKER_VARIABLE_PRICE.VIRTUAL_CURRENCIES.GOLD.CODE:
+                    config.data.PREMIUM_BLOCKER_VARIABLE_PRICE.VIRTUAL_CURRENCIES.GOLD.AMOUNT
+            },
+            to_check_entitlements={}
+        )).until(ReturnValue.EQUAL_TO(True), timeout=30)
+
+        waiter.wait('Did not get {} {}\n{}'.format(
+            config.data.PREMIUM_BLOCKER_VARIABLE_PRICE.VIRTUAL_CURRENCIES.GOLD.AMOUNT,
+            config.data.PREMIUM_BLOCKER_VARIABLE_PRICE.VIRTUAL_CURRENCIES.GOLD.CODE,
+            config.freya.server_gateway(shared_currency_api).get_full_inventory(config.environment['us_wgid']).details
+        ))
+
+    @pytest.mark.skip(reason='FREYA-1166')
+    # Union: ORDO Error
+    @pytest.allure.story('purchase product')
+    @pytest.mark.notthreadsafe
+    def test_purchase_product_should_succeed_when_premium_product_have_vc_price(self, config, clean_up_inventory):
+        config.log.info('Grant {} {} to purchase {}'.format(
+            config.data.PREMIUM_BLOCKER_VC.ORIGINAL_COST.AMOUNT,
+            config.data.PREMIUM_BLOCKER_VC.ORIGINAL_COST.CODE,
+            config.data.PREMIUM_BLOCKER_VC.CODE
+        ))
+
+        grant_response = config.freya.server_gateway.grant_product(
+            str(uuid.uuid4()),
+            config.data.PREMIUM_BLOCKER_VARIABLE_PRICE.COUNTRY,
+            config.data.PREMIUM_BLOCKER_VARIABLE_PRICE.LANGUAGE,
+            config.environment['us_wgid'],
+            [LegacyProductItem(
+                config.data.PREMIUM_BLOCKER_VARIABLE_PRICE.CODE,
+                config.data.PREMIUM_BLOCKER_VC.ORIGINAL_COST.AMOUNT
+            )]
+        )
+        grant_response.assert_is_success()
+
+        config.log.info('Purchase {}'.format(config.data.PREMIUM_BLOCKER_VC.CODE))
+
+        purchase_response = config.freya.server_gateway.purchase_product(
+            str(uuid.uuid4()),
+            config.environment['us_wgid'],
+            config.environment['us_wgid'],
+            config.data.PREMIUM_BLOCKER_VC.CODE,
+            config.data.PREMIUM_BLOCKER_VC.AMOUNT,
+            [CurrencyItem(
+                config.data.PREMIUM_BLOCKER_VC.ORIGINAL_COST.CODE,
+                str(config.data.PREMIUM_BLOCKER_VC.DISCOUNTED_COST.AMOUNT)
+            )],
+            storefront=config.data.PREMIUM_BLOCKER_VC.STOREFRONT
+        )
+        purchase_response.assert_is_success()
+
+        get_inventory_response = config.freya.server_gateway.get_full_inventory(config.environment['us_wgid'])
+        entitlement = next(
+            (
+                entitlement for entitlement in get_inventory_response.content['body']['profile']['entitlements']
+                if entitlement['code'] == config.data.PREMIUM_BLOCKER_VC.PREMIUM_ENTITLEMENT.CODE
+            ),
+            None
+        )
+        assert_that(entitlement, not_none())
+
+    @pytest.mark.skip(reason='FREYA-1166')
+    # Union: ORDO Error
+    @pytest.allure.story('purchase product')
+    @pytest.mark.notthreadsafe
+    def test_purchase_product_should_succeed_when_premium_product_have_discount_on_vc_price(
+            self,
+            config,
+            clean_up_inventory
+    ):
+        config.log.info('Grant {} {} to purchase {}'.format(
+            config.data.PREMIUM_BLOCKER_VC.DISCOUNTED_COST.AMOUNT,
+            config.data.PREMIUM_BLOCKER_VC.DISCOUNTED_COST.CODE,
+            config.data.PREMIUM_BLOCKER_VC.CODE
+        ))
+
+        grant_response = config.freya.server_gateway.grant_product(
+            str(uuid.uuid4()),
+            config.data.PREMIUM_BLOCKER_VARIABLE_PRICE.COUNTRY,
+            config.data.PREMIUM_BLOCKER_VARIABLE_PRICE.LANGUAGE,
+            config.environment['us_wgid'],
+            [LegacyProductItem(
+                config.data.PREMIUM_BLOCKER_VARIABLE_PRICE.CODE,
+                config.data.PREMIUM_BLOCKER_VC.DISCOUNTED_COST.AMOUNT
+            )]
+        )
+        grant_response.assert_is_success()
+
+        config.log.info('Purchase {}'.format(config.data.PREMIUM_BLOCKER_VC.CODE))
+
+        purchase_response = config.freya.server_gateway.purchase_product(
+            str(uuid.uuid4()),
+            config.environment['us_wgid'],
+            config.environment['us_wgid'],
+            config.data.PREMIUM_BLOCKER_VC.CODE,
+            config.data.PREMIUM_BLOCKER_VC.AMOUNT,
+            [CurrencyItem(
+                config.data.PREMIUM_BLOCKER_VC.DISCOUNTED_COST.CODE,
+                str(config.data.PREMIUM_BLOCKER_VC.DISCOUNTED_COST.AMOUNT)
+            )],
+            storefront=config.data.PREMIUM_BLOCKER_VC.STOREFRONT
+        )
+        purchase_response.assert_is_success()
+
+        config.log.info('Check inventory')
+
+        waiter = WaitOn(lambda: InventoryUtilities.inventory_has(
+            config.freya.server_gateway,
+            config.log,
+            config.environment['us_wgid'],
+            to_check_currencies={
+                config.data.PREMIUM_BLOCKER_VC.VIRTUAL_CURRENCIES.TEST_CURRENCY.CODE:
+                    config.data.PREMIUM_BLOCKER_VC.VIRTUAL_CURRENCIES.TEST_CURRENCY.AMOUNT
+            },
+            to_check_entitlements={
+                config.data.PREMIUM_BLOCKER_VC.ENTITLEMENTS.CODE:
+                    config.data.PREMIUM_BLOCKER_VC.ENTITLEMENTS.AMOUNT
+            }
+        )).until(ReturnValue.EQUAL_TO(True), timeout=30)
+
+        waiter.wait('Did not get {} {} or {} {}\n{}'.format(
+            config.data.PREMIUM_BLOCKER_VC.VIRTUAL_CURRENCIES.TEST_CURRENCY.AMOUNT,
+            config.data.PREMIUM_BLOCKER_VC.VIRTUAL_CURRENCIES.TEST_CURRENCY.CODE,
+            config.data.PREMIUM_BLOCKER_VC.ENTITLEMENTS.AMOUNT,
+            config.data.PREMIUM_BLOCKER_VC.ENTITLEMENTS.CODE,
+            config.freya.server_gateway.get_full_inventory(config.environment['us_wgid']).details
+        ))
+
+        title_response = config.freya.title_config.get_titles(config.environment['shared_currency'])
+        shared_currency_api = str(title_response[0]['title_versions'][0]['server_api_key'])
+
+        shared_currency_waiter = WaitOn(lambda: InventoryUtilities.inventory_has(
+            config.freya.server_gateway(shared_currency_api),
+            config.log,
+            config.environment['us_wgid'],
+            to_check_currencies={
+                config.data.PREMIUM_BLOCKER_VC.VIRTUAL_CURRENCIES.GOLD.CODE:
+                    config.data.PREMIUM_BLOCKER_VC.VIRTUAL_CURRENCIES.GOLD.AMOUNT,
+                config.data.PREMIUM_BLOCKER_VC.VIRTUAL_CURRENCIES.FREE_XP.CODE:
+                    config.data.PREMIUM_BLOCKER_VC.VIRTUAL_CURRENCIES.FREE_XP.AMOUNT
+            },
+            to_check_entitlements={}
+        )).until(ReturnValue.EQUAL_TO(True), timeout=30)
+
+        shared_currency_waiter.wait('Did not get {} {}, or {} {}\n{}'.format(
+            config.data.PREMIUM_BLOCKER_VC.VIRTUAL_CURRENCIES.GOLD.AMOUNT,
+            config.data.PREMIUM_BLOCKER_VC.VIRTUAL_CURRENCIES.GOLD.CODE,
+            config.data.PREMIUM_BLOCKER_VC.VIRTUAL_CURRENCIES.FREE_XP.AMOUNT,
+            config.data.PREMIUM_BLOCKER_VC.VIRTUAL_CURRENCIES.FREE_XP.CODE,
+            config.freya.server_gateway(shared_currency_api).get_full_inventory(config.environment['us_wgid']).details
+        ))
+
+        get_inventory_response = config.freya.server_gateway.get_full_inventory(config.environment['us_wgid'])
+        entitlement = next(
+            (
+                entitlement for entitlement in get_inventory_response.content['body']['profile']['entitlements']
+                if entitlement['code'] == config.data.PREMIUM_BLOCKER_VC.PREMIUM_ENTITLEMENT.CODE
+            ),
+            None
+        )
+        assert_that(entitlement, not_none())
+
+    @pytest.mark.skip_for_regions('wgie')
+    # PSA new IGP Flow is not set on region
+    @pytest.allure.story('prepare purchase')
+    def test_prepare_purchase_should_succeed_when_premium_product_have_rm_price(self, config):
+        fetch_response = config.freya.server_gateway.fetch_products(
+            [config.data.PREMIUM_BLOCKER_RM.CODE],
+            config.environment['us_wgid'],
+            config.data.PREMIUM_BLOCKER_RM.US.COUNTRY,
+            config.data.PREMIUM_BLOCKER_RM.LANGUAGE
+        )
+        fetch_response.assert_is_success()
+
+        assert_that(fetch_response.content['body'], has_key('uriList'))
+        assert_that(fetch_response.content['body']['uriList'], has_length(1))
+        uri = fetch_response.content['body']['uriList'][0]
+
+        product_response = RequestBuilder(uri).get()
+        product_response.assert_is_success()
+
+        assert_that(product_response.content, has_key('product_id'))
+        product_id = product_response.content['product_id']
+
+        prepare_response = config.freya.server_gateway.prepare_purchase(
+            str(uuid.uuid4()),
+            config.data.PREMIUM_BLOCKER_RM.US.COUNTRY,
+            config.data.PREMIUM_BLOCKER_RM.LANGUAGE,
+            config.environment['us_wgid'],
+            config.environment['us_wgid'],
+            [PurchaseProductItem(product_id, config.data.PREMIUM_BLOCKER_RM.AMOUNT)],
+            PurchaseUtil.PaymentType.IGP,
+            CurrencyItem(
+                config.data.PREMIUM_BLOCKER_RM.US.CODE,
+                '{0:.2f}'.format(config.data.PREMIUM_BLOCKER_RM.US.DISCOUNTED_AMOUNT)
+            ),
+            PurchaseUtil.PaymentCode.BRAINTREE_PAYPAL,
+            storefront=config.data.PREMIUM_BLOCKER_RM.STOREFRONT
+        )
+        prepare_response.assert_is_success()
+
+    @pytest.mark.skip_for_regions('wgie')
+    # PSA new IGP Flow is not set on region
+    @pytest.allure.story('prepare purchase')
+    def test_prepare_purchase_should_succeed_when_premium_product_have_discount_on_rm_price(
+            self,
+            config
+    ):
+        fetch_response = config.freya.server_gateway.fetch_product_list(
+            config.data.PREMIUM_BLOCKER_RM.STOREFRONT,
+            config.environment['us_wgid'],
+            config.data.PREMIUM_BLOCKER_RM.US.COUNTRY,
+            config.data.PREMIUM_BLOCKER_RM.LANGUAGE
+        )
+        fetch_response.assert_is_success()
+
+        assert_that(fetch_response.content['body'], has_key('uriList'))
+        assert_that(fetch_response.content['body']['uriList'], not_none())
+        uri_list = fetch_response.content['body']['uriList']
+
+        product = next(
+            (
+                product for product in PurchaseUtil.get_product_infos(uri_list)
+                if product['product_code'] == config.data.PREMIUM_BLOCKER_RM.CODE
+            ),
+            None
+        )
+        assert_that(product, not_none())
+
+        assert_that(product, has_key('product_id'))
+        product_id = product['product_id']
+
+        prepare_response = config.freya.server_gateway.prepare_purchase(
+            str(uuid.uuid4()),
+            config.data.PREMIUM_BLOCKER_RM.US.COUNTRY,
+            config.data.PREMIUM_BLOCKER_RM.LANGUAGE,
+            config.environment['us_wgid'],
+            config.environment['us_wgid'],
+            [PurchaseProductItem(product_id, config.data.PREMIUM_BLOCKER_RM.AMOUNT)],
+            PurchaseUtil.PaymentType.IGP,
+            CurrencyItem(
+                config.data.PREMIUM_BLOCKER_RM.US.CODE,
+                '{0:.2f}'.format(config.data.PREMIUM_BLOCKER_RM.US.DISCOUNTED_AMOUNT)
+            ),
+            PurchaseUtil.PaymentCode.BRAINTREE_PAYPAL,
+            storefront=config.data.PREMIUM_BLOCKER_RM.STOREFRONT
+        )
+        prepare_response.assert_is_success()
+
+    @pytest.mark.skip_for_regions('wgie', 'union', 'ct', 'ru', 'eu', 'na', 'asia')
+    # Check after export import tools implementation
+    @pytest.allure.story('purchase product with money v2')
+    def test_purchase_product_with_rm_v2_should_succeed_when_premium_product_have_rm_price(self, config):
+        fetch_response = config.freya.server_gateway.fetch_products(
+            [config.data.PREMIUM_BLOCKER_RM.CODE],
+            config.environment['us_wgid'],
+            config.data.PREMIUM_BLOCKER_RM.US.COUNTRY,
+            config.data.PREMIUM_BLOCKER_RM.LANGUAGE
+        )
+        fetch_response.assert_is_success()
+
+        assert_that(fetch_response.content['body'], has_key('uriList'))
+        assert_that(fetch_response.content['body']['uriList'], has_length(1))
+        uri = fetch_response.content['body']['uriList'][0]
+
+        product_response = RequestBuilder(uri).get()
+        product_response.assert_is_success()
+
+        assert_that(product_response.content, has_key('product_id'))
+        product_id = product_response.content['product_id']
+
+        purchase_response = config.freya.server_gateway.purchase_product_with_money_v2(
+            str(uuid.uuid4()),
+            config.data.PREMIUM_BLOCKER_RM.US.COUNTRY,
+            config.data.PREMIUM_BLOCKER_RM.LANGUAGE,
+            config.environment['us_wgid'],
+            'blocker_test@qa.wargaming.net',
+            config.environment['us_wgid'],
+            [PurchaseProductItem(product_id, config.data.PREMIUM_BLOCKER_RM.AMOUNT)],
+            PurchaseUtil.PaymentType.PSA,
+            CurrencyItem(
+                config.data.PREMIUM_BLOCKER_RM.US.CODE,
+                '{0:.2f}'.format(config.data.PREMIUM_BLOCKER_RM.US.DISCOUNTED_AMOUNT)
+            ),
+            payer_current_ip='127.0.0.1',
+            storefront=config.data.PREMIUM_BLOCKER_RM.STOREFRONT,
+            client_payment_method_id=config.environment['client_payment_id']
+        )
+        purchase_response.assert_is_success()
+
+        assert_that(purchase_response.content['body'], has_key('required_action'))
+        assert_that(purchase_response.content['body']['required_action'], has_key('action_code'))
+
+        url = purchase_response.content['body']['required_action']['action_data']['payment_url']
+        config.log.info('commerce url: {0}'.format(url))
+        money_request = RequestBuilder(url).get(verify=False)
+        money_request.assert_is_success()
+        assert_that(money_request.is_html)
+
+    @pytest.mark.skip_for_regions('wgie', 'union', 'ct', 'ru', 'eu', 'na', 'asia')
+    # Check after export import tools implementation
+    @pytest.allure.story('purchase product with money v2')
+    def test_purchase_product_with_rm_v2_should_succeed_when_premium_product_have_discount_on_rm_price(self, config):
+        fetch_response = config.freya.server_gateway.fetch_products(
+            [config.data.PREMIUM_BLOCKER_RM.CODE],
+            config.environment['us_wgid'],
+            config.data.PREMIUM_BLOCKER_RM.US.COUNTRY,
+            config.data.PREMIUM_BLOCKER_RM.LANGUAGE
+        )
+        fetch_response.assert_is_success()
+
+        assert_that(fetch_response.content['body'], has_key('uriList'))
+        assert_that(fetch_response.content['body']['uriList'], has_length(1))
+        uri = fetch_response.content['body']['uriList'][0]
+
+        product_response = RequestBuilder(uri).get()
+        product_response.assert_is_success()
+
+        assert_that(product_response.content, has_key('product_id'))
+        product_id = product_response.content['product_id']
+
+        purchase_response = config.freya.server_gateway.purchase_product_with_money_v2(
+            str(uuid.uuid4()),
+            config.data.PREMIUM_BLOCKER_RM.US.COUNTRY,
+            config.data.PREMIUM_BLOCKER_RM.LANGUAGE,
+            config.environment['us_wgid'],
+            'blocker_test@qa.wargaming.net',
+            config.environment['us_wgid'],
+            [PurchaseProductItem(product_id, config.data.PREMIUM_BLOCKER_RM.AMOUNT)],
+            PurchaseUtil.PaymentType.PSA,
+            CurrencyItem(
+                config.data.PREMIUM_BLOCKER_RM.US.CODE,
+                '{0:.2f}'.format(config.data.PREMIUM_BLOCKER_RM.US.DISCOUNTED_AMOUNT)
+            ),
+            payer_current_ip='127.0.0.1',
+            storefront=config.data.PREMIUM_BLOCKER_RM.STOREFRONT,
+            client_payment_method_id=config.environment['client_payment_id']
+        )
+        purchase_response.assert_is_success()
+
+        assert_that(purchase_response.content['body'], has_key('required_action'))
+        assert_that(purchase_response.content['body']['required_action'], has_key('action_code'))
+
+        url = purchase_response.content['body']['required_action']['action_data']['payment_url']
+        config.log.info('commerce url: {0}'.format(url))
+        money_request = RequestBuilder(url).get(verify=False)
+        money_request.assert_is_success()
+        assert_that(money_request.is_html)
+
+    @pytest.mark.skip_for_regions('ct', 'wgie')
+    # New IGP flow is not set on region PSA
+    @pytest.allure.story('prepare purchase')
+    def test_prepare_purchase_should_succeed_when_premium_product_have_rm_price_in_ru(
+            self,
+            config
+    ):
+        fetch_response = config.freya.server_gateway.fetch_products(
+            [config.data.PREMIUM_BLOCKER_RM.CODE],
+            config.environment['ru_wgid'],
+            config.data.PREMIUM_BLOCKER_RM.RU.COUNTRY,
+            config.data.PREMIUM_BLOCKER_RM.LANGUAGE
+        )
+        fetch_response.assert_is_success()
+
+        assert_that(fetch_response.content['body'], has_key('uriList'))
+        assert_that(fetch_response.content['body']['uriList'], has_length(1))
+        uri = fetch_response.content['body']['uriList'][0]
+
+        product_response = RequestBuilder(uri).get()
+        product_response.assert_is_success()
+
+        assert_that(product_response.content, has_key('product_id'))
+        product_id = product_response.content['product_id']
+
+        prepare_response = config.freya.server_gateway.prepare_purchase(
+            str(uuid.uuid4()),
+            config.data.PREMIUM_BLOCKER_RM.RU.COUNTRY,
+            config.data.PREMIUM_BLOCKER_RM.LANGUAGE,
+            config.environment['ru_wgid'],
+            config.environment['ru_wgid'],
+            [PurchaseProductItem(product_id, config.data.PREMIUM_BLOCKER_RM.AMOUNT)],
+            PurchaseUtil.PaymentType.IGP,
+            CurrencyItem(
+                config.data.PREMIUM_BLOCKER_RM.RU.CODE,
+                '{0:.2f}'.format(config.data.PREMIUM_BLOCKER_RM.RU.DISCOUNTED_AMOUNT)
+            ),
+            PurchaseUtil.PaymentCode.BRAINTREE_PAYPAL,
+            storefront=config.data.PREMIUM_BLOCKER_RM.STOREFRONT
+        )
+        prepare_response.assert_is_success()
+
+    @pytest.mark.skip_for_regions('ct', 'wgie')
+    # New IGP flow is not set on region PSA
+    @pytest.allure.story('prepare purchase')
+    def test_prepare_purchase_should_succeed_when_premium_product_have_discount_on_rm_price_in_ru(
+            self,
+            config
+    ):
+        fetch_response = config.freya.server_gateway.fetch_product_list(
+            config.data.PREMIUM_BLOCKER_RM.STOREFRONT,
+            config.environment['ru_wgid'],
+            config.data.PREMIUM_BLOCKER_RM.RU.COUNTRY,
+            config.data.PREMIUM_BLOCKER_RM.LANGUAGE
+        )
+        fetch_response.assert_is_success()
+
+        assert_that(fetch_response.content['body'], has_key('uriList'))
+        assert_that(fetch_response.content['body']['uriList'], not_none())
+        uri_list = fetch_response.content['body']['uriList']
+
+        product = next(
+            (
+                product for product in PurchaseUtil.get_product_infos(uri_list)
+                if product['product_code'] == config.data.PREMIUM_BLOCKER_RM.CODE
+            ),
+            None
+        )
+        assert_that(product, not_none())
+
+        assert_that(product, has_key('product_id'))
+        product_id = product['product_id']
+
+        prepare_response = config.freya.server_gateway.prepare_purchase(
+            str(uuid.uuid4()),
+            config.data.PREMIUM_BLOCKER_RM.RU.COUNTRY,
+            config.data.PREMIUM_BLOCKER_RM.LANGUAGE,
+            config.environment['ru_wgid'],
+            config.environment['ru_wgid'],
+            [PurchaseProductItem(product_id, config.data.PREMIUM_BLOCKER_RM.AMOUNT)],
+            PurchaseUtil.PaymentType.IGP,
+            CurrencyItem(
+                config.data.PREMIUM_BLOCKER_RM.RU.CODE,
+                '{0:.2f}'.format(config.data.PREMIUM_BLOCKER_RM.RU.DISCOUNTED_AMOUNT)
+            ),
+            PurchaseUtil.PaymentCode.BRAINTREE_PAYPAL,
+            storefront=config.data.PREMIUM_BLOCKER_RM.STOREFRONT
+        )
+        prepare_response.assert_is_success()
+
+    @pytest.mark.skip_for_regions('wgie', 'union', 'ct', 'ru', 'eu', 'na', 'asia')
+    # Check after export import tools implementation
+    @pytest.allure.story('purchase product with money v2')
+    def test_purchase_product_with_rm_v2_should_succeed_when_premium_product_have_rm_price_in_ru(self, config):
+        fetch_response = config.freya.server_gateway.fetch_products(
+            [config.data.PREMIUM_BLOCKER_RM.CODE],
+            config.environment['ru_wgid'],
+            config.data.PREMIUM_BLOCKER_RM.RU.COUNTRY,
+            config.data.PREMIUM_BLOCKER_RM.LANGUAGE
+        )
+        fetch_response.assert_is_success()
+
+        assert_that(fetch_response.content['body'], has_key('uriList'))
+        assert_that(fetch_response.content['body']['uriList'], has_length(1))
+        uri = fetch_response.content['body']['uriList'][0]
+
+        product_response = RequestBuilder(uri).get()
+        product_response.assert_is_success()
+
+        assert_that(product_response.content, has_key('product_id'))
+        product_id = product_response.content['product_id']
+
+        purchase_response = config.freya.server_gateway.purchase_product_with_money_v2(
+            str(uuid.uuid4()),
+            config.data.PREMIUM_BLOCKER_RM.RU.COUNTRY,
+            config.data.PREMIUM_BLOCKER_RM.LANGUAGE,
+            config.environment['ru_wgid'],
+            'test_blocker_ru@qa.wargaming.net',
+            config.environment['ru_wgid'],
+            [PurchaseProductItem(product_id, config.data.PREMIUM_BLOCKER_RM.AMOUNT)],
+            PurchaseUtil.PaymentType.PSA,
+            CurrencyItem(
+                config.data.PREMIUM_BLOCKER_RM.RU.CODE,
+                '{0:.2f}'.format(config.data.PREMIUM_BLOCKER_RM.RU.DISCOUNTED_AMOUNT)
+            ),
+            payer_current_ip='127.0.0.1',
+            storefront=config.data.PREMIUM_BLOCKER_RM.STOREFRONT,
+            client_payment_method_id=config.environment['client_payment_id']
+        )
+        purchase_response.assert_is_success()
+
+        assert_that(purchase_response.content['body'], has_key('required_action'))
+        assert_that(purchase_response.content['body']['required_action'], has_key('action_code'))
+
+        url = purchase_response.content['body']['required_action']['action_data']['payment_url']
+        config.log.info('commerce url: {0}'.format(url))
+        money_request = RequestBuilder(url).get(verify=False)
+        money_request.assert_is_success()
+        assert_that(money_request.is_html)
+
+    @pytest.mark.skip_for_regions('wgie', 'union', 'ct', 'ru', 'eu', 'na', 'asia')
+    # Check after export import tools implementation
+    @pytest.allure.story('purchase product with money v2')
+    def test_purchase_product_with_rm_should_succeed_when_premium_product_have_discount_on_rm_price_in_ru(self, config):
+        fetch_response = config.freya.server_gateway.fetch_products(
+            [config.data.PREMIUM_BLOCKER_RM.CODE],
+            config.environment['ru_wgid'],
+            config.data.PREMIUM_BLOCKER_RM.RU.COUNTRY,
+            config.data.PREMIUM_BLOCKER_RM.LANGUAGE
+        )
+        fetch_response.assert_is_success()
+
+        assert_that(fetch_response.content['body'], has_key('uriList'))
+        assert_that(fetch_response.content['body']['uriList'], has_length(1))
+        uri = fetch_response.content['body']['uriList'][0]
+
+        product_response = RequestBuilder(uri).get()
+        product_response.assert_is_success()
+
+        assert_that(product_response.content, has_key('product_id'))
+        product_id = product_response.content['product_id']
+
+        purchase_response = config.freya.server_gateway.purchase_product_with_money_v2(
+            str(uuid.uuid4()),
+            config.data.PREMIUM_BLOCKER_RM.RU.COUNTRY,
+            config.data.PREMIUM_BLOCKER_RM.LANGUAGE,
+            config.environment['ru_wgid'],
+            'test_blocker_ru@qa.wargaming.net',
+            config.environment['ru_wgid'],
+            [PurchaseProductItem(product_id, config.data.PREMIUM_BLOCKER_RM.AMOUNT)],
+            PurchaseUtil.PaymentType.PSA,
+            CurrencyItem(
+                config.data.PREMIUM_BLOCKER_RM.RU.CODE,
+                '{0:.2f}'.format(config.data.PREMIUM_BLOCKER_RM.RU.DISCOUNTED_AMOUNT)
+            ),
+            payer_current_ip='127.0.0.1',
+            storefront=config.data.PREMIUM_BLOCKER_RM.STOREFRONT,
+            client_payment_method_id=config.environment['client_payment_id']
+        )
+        purchase_response.assert_is_success()
+
+        assert_that(purchase_response.content['body'], has_key('required_action'))
+        assert_that(purchase_response.content['body']['required_action'], has_key('action_code'))
+
+        url = purchase_response.content['body']['required_action']['action_data']['payment_url']
+        config.log.info('commerce url: {0}'.format(url))
+        money_request = RequestBuilder(url).get(verify=False)
+        money_request.assert_is_success()
+        assert_that(money_request.is_html)
+
+    @pytest.mark.skip_for_regions('ct', 'wgie')
+    # New IGP flow is not set on region PSA
+    @pytest.allure.story('prepare purchase')
+    def test_prepare_purchase_should_succeed_when_premium_product_have_rm_price_in_ar(
+            self,
+            config,
+            calculate_ar_cost
+    ):
+        fetch_response = config.freya.server_gateway.fetch_products(
+            [config.data.PREMIUM_BLOCKER_RM.CODE],
+            config.environment['ar_wgid'],
+            config.data.PREMIUM_BLOCKER_RM.AR.COUNTRY,
+            config.data.PREMIUM_BLOCKER_RM.LANGUAGE
+        )
+        fetch_response.assert_is_success()
+
+        assert_that(fetch_response.content['body'], has_key('uriList'))
+        assert_that(fetch_response.content['body']['uriList'], has_length(1))
+        uri = fetch_response.content['body']['uriList'][0]
+
+        product_response = RequestBuilder(uri).get()
+        product_response.assert_is_success()
+
+        assert_that(product_response.content, has_key('product_id'))
+        product_id = product_response.content['product_id']
+
+        prepare_response = config.freya.server_gateway.prepare_purchase(
+            str(uuid.uuid4()),
+            config.data.PREMIUM_BLOCKER_RM.AR.COUNTRY,
+            config.data.PREMIUM_BLOCKER_RM.LANGUAGE,
+            config.environment['ar_wgid'],
+            config.environment['ar_wgid'],
+            [PurchaseProductItem(product_id, config.data.PREMIUM_BLOCKER_RM.AMOUNT)],
+            PurchaseUtil.PaymentType.IGP,
+            CurrencyItem(
+                config.data.PREMIUM_BLOCKER_RM.AR.CODE,
+                str(config.store.ar_cost)
+            ),
+            PurchaseUtil.PaymentCode.BRAINTREE_PAYPAL,
+            storefront=config.data.PREMIUM_BLOCKER_RM.STOREFRONT
+        )
+        prepare_response.assert_is_success()
+
+    @pytest.allure.story('prepare purchase')
+    def test_prepare_purchase_should_succeed_when_premium_product_have_discount_on_rm_price_in_ar(
+            self,
+            config,
+            calculate_ar_cost
+    ):
+        config.log.info('Apply discount to converted ARS cost')
+        discounted_cost = int(round(config.store.ar_cost * (1 - config.data.PREMIUM_BLOCKER_RM.AR.DISCOUNT), 0))
+
+        config.log.info('Calculated discounted cost is {} {}'.format(
+            discounted_cost,
+            config.data.PREMIUM_BLOCKER_RM.AR.CODE
+        ))
+
+        fetch_response = config.freya.server_gateway.fetch_product_list(
+            config.data.PREMIUM_BLOCKER_RM.STOREFRONT,
+            config.environment['ar_wgid'],
+            config.data.PREMIUM_BLOCKER_RM.AR.COUNTRY,
+            config.data.PREMIUM_BLOCKER_RM.LANGUAGE
+        )
+        fetch_response.assert_is_success()
+
+        assert_that(fetch_response.content['body'], has_key('uriList'))
+        assert_that(fetch_response.content['body']['uriList'], not_none())
+        uri_list = fetch_response.content['body']['uriList']
+
+        product = next(
+            (
+                product for product in PurchaseUtil.get_product_infos(uri_list)
+                if product['product_code'] == config.data.PREMIUM_BLOCKER_RM.CODE
+            ),
+            None
+        )
+        assert_that(product, not_none())
+
+        assert_that(product, has_key('product_id'))
+        product_id = product['product_id']
+
+        prepare_response = config.freya.server_gateway.prepare_purchase(
+            str(uuid.uuid4()),
+            config.data.PREMIUM_BLOCKER_RM.AR.COUNTRY,
+            config.data.PREMIUM_BLOCKER_RM.LANGUAGE,
+            config.environment['ar_wgid'],
+            config.environment['ar_wgid'],
+            [PurchaseProductItem(product_id, config.data.PREMIUM_BLOCKER_RM.AMOUNT)],
+            PurchaseUtil.PaymentType.IGP,
+            CurrencyItem(
+                config.data.PREMIUM_BLOCKER_RM.AR.CODE,
+                str(discounted_cost)
+            ),
+            PurchaseUtil.PaymentCode.BRAINTREE_PAYPAL,
+            storefront=config.data.PREMIUM_BLOCKER_RM.STOREFRONT
+        )
+        prepare_response.assert_is_success()
+
+    @pytest.mark.skip_for_regions('wgie', 'union', 'ct', 'ru', 'eu', 'na', 'asia')
+    # Check after export import tools implementation
+    @pytest.allure.story('purchase product with money v2')
+    def test_purchase_product_with_rm_v2_should_succeed_when_premium_product_have_rm_price_in_ar(
+            self,
+            config,
+            calculate_ar_cost
+    ):
+        fetch_response = config.freya.server_gateway.fetch_products(
+            [config.data.PREMIUM_BLOCKER_RM.CODE],
+            config.environment['ar_wgid'],
+            config.data.PREMIUM_BLOCKER_RM.AR.COUNTRY,
+            config.data.PREMIUM_BLOCKER_RM.LANGUAGE
+        )
+        fetch_response.assert_is_success()
+
+        assert_that(fetch_response.content['body'], has_key('uriList'))
+        assert_that(fetch_response.content['body']['uriList'], has_length(1))
+        uri = fetch_response.content['body']['uriList'][0]
+
+        product_response = RequestBuilder(uri).get()
+        product_response.assert_is_success()
+
+        assert_that(product_response.content, has_key('product_id'))
+        product_id = product_response.content['product_id']
+
+        purchase_response = config.freya.server_gateway.purchase_product_with_money_v2(
+            str(uuid.uuid4()),
+            config.data.PREMIUM_BLOCKER_RM.AR.COUNTRY,
+            config.data.PREMIUM_BLOCKER_RM.LANGUAGE,
+            config.environment['ar_wgid'],
+            'test_blocker_ar@qa.wargaming.net',
+            config.environment['ar_wgid'],
+            [PurchaseProductItem(product_id, config.data.PREMIUM_BLOCKER_RM.AMOUNT)],
+            PurchaseUtil.PaymentType.PSA,
+            CurrencyItem(
+                config.data.PREMIUM_BLOCKER_RM.AR.CODE,
+                str(config.store.ar_cost)
+            ),
+            storefront=config.data.PREMIUM_BLOCKER_RM.STOREFRONT,
+            client_payment_method_id=product_response.content['client_payment_methods'][0]
+        )
+
+        purchase_response.assert_is_success()
+
+        assert_that(purchase_response.content['body'], has_key('required_action'))
+        assert_that(purchase_response.content['body']['required_action'], has_key('action_data'))
+        assert_that(purchase_response.content['body']['required_action']['action_data'], has_key('payment_url'))
+        url = purchase_response.content['body']['required_action']['action_data']['payment_url']
+
+        config.log.info('commerce url: {0}'.format(url))
+        money_request = RequestBuilder(url).get(verify=False)
+        money_request.assert_is_success()
+        assert_that(money_request.is_html)
+
+    @pytest.mark.skip_for_regions('wgie', 'union', 'ct', 'ru', 'eu', 'na', 'asia')
+    # Check after export import tools implementation
+    @pytest.allure.story('purchase product with money v2')
+    def test_purchase_product_with_rm_should_succeed_when_premium_product_have_discount_on_rm_price_in_ar(
+            self,
+            config,
+            calculate_ar_cost
+    ):
+        config.log.info('Apply discount to converted ARS cost')
+        discounted_cost = int(round(config.store.ar_cost * (1 - config.data.PREMIUM_BLOCKER_RM.AR.DISCOUNT), 0))
+
+        config.log.info('Calculated discounted cost is {} {}'.format(
+            discounted_cost,
+            config.data.PREMIUM_BLOCKER_RM.AR.CODE
+        ))
+
+        fetch_response = config.freya.server_gateway.fetch_product_list(
+            config.data.PREMIUM_BLOCKER_RM.STOREFRONT,
+            config.environment['ar_wgid'],
+            config.data.PREMIUM_BLOCKER_RM.AR.COUNTRY,
+            config.data.PREMIUM_BLOCKER_RM.LANGUAGE
+        )
+        fetch_response.assert_is_success()
+
+        assert_that(fetch_response.content['body'], has_key('uriList'))
+        assert_that(fetch_response.content['body']['uriList'], not_none())
+        uri_list = fetch_response.content['body']['uriList']
+
+        product_response = RequestBuilder(uri_list[0]).get()
+        product_response.assert_is_success()
+        assert_that(product_response.content, has_key('product_id'))
+
+        product = next(
+            (
+                product for product in PurchaseUtil.get_product_infos(uri_list)
+                if product['product_code'] == config.data.PREMIUM_BLOCKER_RM.CODE
+            ),
+            None
+        )
+        assert_that(product, not_none())
+
+        assert_that(product, has_key('product_id'))
+        product_id = product['product_id']
+
+        purchase_response = config.freya.server_gateway.purchase_product_with_money_v2(
+            str(uuid.uuid4()),
+            config.data.PREMIUM_BLOCKER_RM.AR.COUNTRY,
+            config.data.PREMIUM_BLOCKER_RM.LANGUAGE,
+            config.environment['ar_wgid'],
+            'test_blocker_ar@qa.wargaming.net',
+            config.environment['ar_wgid'],
+            [PurchaseProductItem(product_id, config.data.PREMIUM_BLOCKER_RM.AMOUNT)],
+            PurchaseUtil.PaymentType.PSA,
+            CurrencyItem(
+                config.data.PREMIUM_BLOCKER_RM.AR.CODE,
+                str(discounted_cost)
+            ),
+            storefront=config.data.PREMIUM_BLOCKER_RM.STOREFRONT,
+            client_payment_method_id=product_response.content['client_payment_methods'][0]
+        )
+        purchase_response.assert_is_success()
+
+        assert_that(purchase_response.content['body'], has_key('required_action'))
+        assert_that(purchase_response.content['body']['required_action'], has_key('action_data'))
+        assert_that(purchase_response.content['body']['required_action']['action_data'], has_key('payment_url'))
+        url = purchase_response.content['body']['required_action']['action_data']['payment_url']
+
+        config.log.info('commerce url: {0}'.format(url))
+        money_request = RequestBuilder(url).get(verify=False)
+        money_request.assert_is_success()
+        assert_that(money_request.is_html)
+
+    @pytest.mark.skip_for_regions('ct', 'wgie')
+    # New IGP flow is not set on region PSA
+    @pytest.allure.story('prepare purchase')
+    def test_prepare_purchase_should_succeed_when_premium_product_have_variable_price(
+            self,
+            config
+    ):
+        trilogy_cost = round(config.data.PREMIUM_BLOCKER_VARIABLE_PRICE.AMOUNT / 168.2, 2)
+
+        fetch_response = config.freya.server_gateway.fetch_products(
+            [config.data.PREMIUM_BLOCKER_VARIABLE_PRICE.CODE],
+            config.environment['us_wgid'],
+            config.data.PREMIUM_BLOCKER_VARIABLE_PRICE.COUNTRY,
+            config.data.PREMIUM_BLOCKER_VARIABLE_PRICE.LANGUAGE
+        )
+        fetch_response.assert_is_success()
+
+        assert_that(fetch_response.content['body'], has_key('uriList'))
+        assert_that(fetch_response.content['body']['uriList'], has_length(1))
+        url = fetch_response.content['body']['uriList'][0]
+
+        product_response = RequestBuilder(url).get()
+        product_response.assert_is_success()
+
+        assert_that(product_response.content, has_key('product_id'))
+        product_id = product_response.content['product_id']
+
+        prepare_response = config.freya.server_gateway.prepare_purchase(
+            str(uuid.uuid4()),
+            config.data.PREMIUM_BLOCKER_VARIABLE_PRICE.COUNTRY,
+            config.data.PREMIUM_BLOCKER_VARIABLE_PRICE.LANGUAGE,
+            config.environment['us_wgid'],
+            config.environment['us_wgid'],
+            [PurchaseProductItem(product_id, config.data.PREMIUM_BLOCKER_VARIABLE_PRICE.AMOUNT)],
+            PurchaseUtil.PaymentType.IGP,
+            CurrencyItem(
+                config.data.PREMIUM_BLOCKER_VARIABLE_PRICE.CURRENCY_CODE,
+                '{0:.2f}'.format(trilogy_cost)
+            ),
+            PurchaseUtil.PaymentCode.BRAINTREE_PAYPAL,
+            storefront=config.data.PREMIUM_BLOCKER_VARIABLE_PRICE.STOREFRONT
+        )
+        prepare_response.assert_is_success()
+
+    @pytest.mark.skip_for_regions('wgie', 'union', 'ct', 'ru', 'eu', 'na', 'asia')
+    # Check after export import tools implementation
+    @pytest.allure.story('purchase product with money v2')
+    def test_purchase_product_with_rm_v2_should_succeed_when_premium_product_have_variable_price(self, config):
+        trilogy_cost = round(config.data.PREMIUM_BLOCKER_VARIABLE_PRICE.AMOUNT / 168.2, 2)
+
+        fetch_response = config.freya.server_gateway.fetch_products(
+            [config.data.PREMIUM_BLOCKER_VARIABLE_PRICE.CODE],
+            config.environment['us_wgid'],
+            config.data.PREMIUM_BLOCKER_VARIABLE_PRICE.COUNTRY,
+            config.data.PREMIUM_BLOCKER_VARIABLE_PRICE.LANGUAGE
+        )
+        fetch_response.assert_is_success()
+
+        assert_that(fetch_response.content['body'], has_key('uriList'))
+        assert_that(fetch_response.content['body']['uriList'], has_length(1))
+        uri = fetch_response.content['body']['uriList'][0]
+
+        product_response = RequestBuilder(uri).get()
+        product_response.assert_is_success()
+
+        assert_that(product_response.content, has_key('product_id'))
+        product_id = product_response.content['product_id']
+
+        cost = product_response.content['price']['real_price']
+        assert_that(cost, not_none())
+        config.log.info('cost: {0}'.format(cost['code']))
+        config.log.info('amount: {0}'.format(cost['amount']))
+
+        purchase_response = config.freya.server_gateway.purchase_product_with_money_v2(
+            str(uuid.uuid4()),
+            config.data.PREMIUM_BLOCKER_VARIABLE_PRICE.COUNTRY,
+            config.data.PREMIUM_BLOCKER_VARIABLE_PRICE.LANGUAGE,
+            config.environment['us_wgid'],
+            'blocker_test@qa.wargaming.net',
+            config.environment['us_wgid'],
+            [PurchaseProductItem(product_id, config.data.PREMIUM_BLOCKER_VARIABLE_PRICE.AMOUNT)],
+            PurchaseUtil.PaymentType.PSA,
+            CurrencyItem(
+                config.data.PREMIUM_BLOCKER_VARIABLE_PRICE.CURRENCY_CODE,
+                '{0:.2f}'.format(trilogy_cost)
+            ),
+            payer_current_ip='127.0.0.1',
+            storefront=config.data.PREMIUM_BLOCKER_VARIABLE_PRICE.STOREFRONT,
+            client_payment_method_id=config.environment['client_payment_id']
+        )
+        purchase_response.assert_is_success()
+
+        assert_that(purchase_response.content['body'], has_key('required_action'))
+        assert_that(purchase_response.content['body']['required_action'], has_key('action_code'))
+
+        url = purchase_response.content['body']['required_action']['action_data']['payment_url']
+        config.log.info('commerce url: {0}'.format(url))
+        money_request = RequestBuilder(url).get(verify=False)
+        money_request.assert_is_success()
+        assert_that(money_request.is_html)
+
+    @pytest.mark.skip_for_regions('ct')
+    @pytest.allure.story('fetch product list')
+    def test_fetch_product_list_should_fail_when_override_set_vis_purch_to_false_on_variable_price_premium_product(
+            self,
+            config
+    ):
+        fetch_response = config.freya.server_gateway.fetch_product_list(
+            config.data.PREMIUM_BLOCKER_VARIABLE_PRICE.STOREFRONT,
+            config.environment['us_wgid'],
+            config.data.PREMIUM_BLOCKER_VARIABLE_PRICE.COUNTRY,
+            config.data.PREMIUM_BLOCKER_VARIABLE_PRICE.LANGUAGE
+        )
+        fetch_response.assert_is_success()
+
+        assert_that(fetch_response.content['body'], has_key('uriList'))
+        assert_that(fetch_response.content['body']['uriList'], not_none())
+        uri_list = fetch_response.content['body']['uriList']
+
+        product = next(
+            (
+                product for product in PurchaseUtil.get_product_infos(uri_list)
+                if product['product_code'] == config.data.PREMIUM_BLOCKER_VARIABLE_PRICE.CODE
+            ),
+            None
+        )
+        assert_that(product, none())
+
+    @pytest.mark.skip("PM not production ready")
+    @pytest.allure.story('fetch product price v2')
+    def test_fetch_product_price_should_succeed_and_return_all_available_payment_methods(self, config):
+
+        fetch_response = config.freya.server_gateway.fetch_product_price_v2(
+            config.data.PREMIUM_BLOCKER_PAYMENT_METHODS.CODE,
+            config.data.PREMIUM_BLOCKER_PAYMENT_METHODS.COUNTRY,
+            quantity=1,
+            wgid=config.environment['us_wgid'],
+            response_fields={'client_payment_methods': True}
+        )
+        fetch_response.assert_is_success()
+        assert_that(fetch_response.content['body'], has_key('client_payment_methods'))
+        assert_that(fetch_response.content['body']['client_payment_methods'], is_not(empty()))

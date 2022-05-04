@@ -1,0 +1,312 @@
+{
+  "$schema": "http://json-schema.org/draft-04/schema#",
+  "definitions": {},
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "pss",
+    "wgpm"
+  ],
+  "properties": {
+    "pss": {
+      "type": "object",
+      "additionalProperties": false
+    },
+    "wot": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "receipt": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "wgpm": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "some_locstring",
+        "some_loc_media",
+        "some_loc_media_list",
+        "some_loc_string_list"
+      ],
+      "properties": {
+        "some_locstring": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "@type",
+            "data"
+          ],
+          "properties": {
+            "@type": {
+              "type": "string",
+              "enum": [
+                "LocString"
+              ]
+            },
+            "data": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "en",
+                "value"
+              ],
+              "properties": {
+                "en": {
+                  "type": "string"
+                },
+                "value": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        },
+        "some_loc_media": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "@type",
+            "data"
+          ],
+          "properties": {
+            "@type": {
+              "type": "string",
+              "enum": [
+                "LocMedia"
+              ]
+            },
+            "data": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "text",
+                "mediatype",
+                "url",
+                "preview_url",
+                "tags"
+              ],
+              "properties": {
+                "text": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "en",
+                    "value"
+                  ],
+                  "properties": {
+                    "en": {
+                      "type": "string"
+                    },
+                    "value": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "mediatype": {
+                  "type": "string"
+                },
+                "url": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "en",
+                    "value"
+                  ],
+                  "properties": {
+                    "en": {
+                      "type": "string"
+                    },
+                    "value": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "preview_url": {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "en",
+                    "value"
+                  ],
+                  "properties": {
+                    "en": {
+                      "type": "string"
+                    },
+                    "value": {
+                      "type": "string"
+                    }
+                  }
+                },
+                "tags": {
+                  "type": "object",
+                  "required": [
+                    "tag_a",
+                    "tag_b"
+                  ],
+                  "properties": {
+                    "tag_a": {
+                      "type": "boolean",
+                      "enum": [
+                        true
+                      ]
+                    },
+                    "tag_b": {
+                      "type": "boolean",
+                      "enum": [
+                        false
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "some_loc_media_list": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "@type",
+            "data"
+          ],
+          "properties": {
+            "@type": {
+              "type": "string",
+              "enum": [
+                "LocMediaList"
+              ]
+            },
+            "data": {
+              "type": "array",
+              "items": [
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "mediatype",
+                    "text",
+                    "url",
+                    "preview_url",
+                    "tags"
+                  ],
+                  "properties": {
+                    "mediatype": {
+                      "type": "string"
+                    },
+                    "text": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "en",
+                        "value"
+                      ],
+                      "properties": {
+                        "en": {
+                          "type": "string"
+                        },
+                        "value": {
+                          "type": "string"
+                        }
+                      }
+                    },
+                    "url": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "en",
+                        "value"
+                      ],
+                      "properties": {
+                        "en": {
+                          "type": "string"
+                        },
+                        "value": {
+                          "type": "string"
+                        }
+                      }
+                    },
+                    "preview_url": {
+                      "type": "object",
+                      "additionalProperties": false,
+                      "required": [
+                        "en",
+                        "value"
+                      ],
+                      "properties": {
+                        "en": {
+                          "type": "string"
+                        },
+                        "value": {
+                          "type": "string"
+                        }
+                      }
+                    },
+                    "tags": {
+                      "type": "object",
+                      "required": [
+                        "tag_a",
+                        "tag_b"
+                      ],
+                      "properties": {
+                        "tag_a": {
+                          "type": "boolean",
+                          "enum": [
+                            true
+                          ]
+                        },
+                        "tag_b": {
+                          "type": "boolean",
+                          "enum": [
+                            false
+                          ]
+                        }
+                      }
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        },
+        "some_loc_string_list": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "@type",
+            "data"
+          ],
+          "properties": {
+            "@type": {
+              "type": "string",
+              "enum": [
+                "LocStringList"
+              ]
+            },
+            "data": {
+              "type": "array",
+              "items": [
+                {
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": [
+                    "en",
+                    "value"
+                  ],
+                  "properties": {
+                    "en": {
+                      "type": "string"
+                    },
+                    "value": {
+                      "type": "string"
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        }
+      }
+    }
+  }
+}

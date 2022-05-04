@@ -1,0 +1,42 @@
+# Basic files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Icon?
+ehthumbs.db
+Thumbs.db
+
+# PyCharm files
+*.iml
+*.ipr
+*.iws
+.idea
+/out/
+
+# Eclipse
+.project
+.pydevproject
+.settings
+
+# build locations
+build/
+dist/
+.cache/
+main/freya_tests.egg-info/
+
+# Reports
+results
+
+# Python
+*.pyc
+**/.pytest_cache/*
+
+# Dummy Server
+dummy_server/node_modules
+
+# virtualenv
+integration/venv
+
+**/temp_catalog.json

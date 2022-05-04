@@ -1,0 +1,91 @@
+{
+  "$schema": "http://json-schema.org/draft-06/schema#",
+  "definitions": {},
+  "properties": {
+    "body": {
+      "properties": {
+        "activated": {
+          "type": "boolean"
+        },
+        "allowed": {
+          "type": "boolean"
+        },
+        "auth_token": {
+          "type": "string"
+        },
+        "client_gateway": {
+          "type": "string"
+        },
+        "client_session": {
+          "type": "string"
+        },
+        "first_login": {
+          "type": "boolean"
+        },
+        "nickname": {
+          "type": "string"
+        },
+        "profile_id": {
+          "type": "string"
+        },
+        "remember_me": {
+          "type": "string"
+        },
+        "restrictions": {
+          "items": {
+            "properties": {
+              "banId": {
+                "type": "integer"
+              },
+              "banType": {
+                "type": "object"
+              },
+              "component": {
+                "type": "object"
+              },
+              "expiresAt": {
+                "type": "integer"
+              },
+              "reason": {
+                "type": "object"
+              },
+              "setter": {
+                "type": "object"
+              },
+              "startsAt": {
+                "type": "integer"
+              }
+            },
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "result_code": {
+          "type": "string"
+        },
+        "result_message": {
+          "type": "string"
+        },
+        "success": {
+          "type": "boolean"
+        },
+        "wgid": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "header": {
+      "properties": {
+        "message_id": {
+          "type": "string"
+        },
+        "title_override": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    }
+  },
+  "type": "object"
+}

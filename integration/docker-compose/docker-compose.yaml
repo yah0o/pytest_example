@@ -1,0 +1,34 @@
+version: '3'
+services:
+  clickhouse:
+    container_name: clickhouse
+    image: yandex/clickhouse-server
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- 127.0.0.1:8123 | grep Ok"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: on-failure
+    networks:
+      - paudit
+
+  snitch:
+    container_name: snitch
+    build:
+      context: ""
+      dockerfile: Dockerfile.snitch
+    environment:
+      RUST_LOG: 'info,snitch=debug'
+    healthcheck:
+      test: ["CMD-SHELL", "nc -vz -u 127.0.0.1 55555"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: on-failure
+    depends_on:
+      - clickhouse
+    networks:
+      - paudit
+
+networks:
+  paudit:

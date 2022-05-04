@@ -1,0 +1,209 @@
+{
+  "$schema": "http://json-schema.org/draft-04/schema#",
+  "definitions": {},
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "coupons": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "currencies": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "amount": {
+            "type": "string"
+          },
+          "code": {
+            "type": "string"
+          },
+          "title_code": {
+            "type": "string"
+          },
+          "expiration_seconds": {
+            "type": "string"
+          },
+          "expiration_type": {
+            "type": "string"
+          },
+          "new_child_profile_name": {
+            "type": "string"
+          },
+          "percent_value": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "currency_code": {
+                  "type": "string"
+                },
+                "pct": {
+                  "type": "integer"
+                }
+              }
+            }
+          },
+          "metadata": {
+            "type": "object"
+          }
+        }
+      }
+    },
+    "filter_properties": {
+            "type": "object"
+          },
+    "friendly_name": {
+      "type": "string"
+    },
+    "price_type": {
+      "type": "string"
+    },
+    "language": {
+      "type": "string"
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "pss": {
+          "type": "object"
+        }
+      }
+    },
+    "original_price": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "virtual_price": {
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "amount": {
+                "type": "string"
+              },
+              "code": {
+                "type": "string"
+              },
+              "expiration_seconds": {
+                "type": "string"
+              },
+              "metadata": {
+                "type": "object"
+              }
+            }
+          },
+          "type": "array"
+        }
+      }
+    },
+    "payment_group": {
+      "items": {
+        "type": "object"
+      },
+      "type": "array"
+    },
+    "price": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "virtual_price": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "amount": {
+                "type": "string"
+              },
+              "code": {
+                "type": "string"
+              },
+              "expiration_seconds": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    },
+    "entitlements": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "amount": {
+            "type": "number"
+          },
+          "code": {
+            "type": "string"
+          },
+          "expiration": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "applied_promotions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "start_time": {
+            "type": "string"
+          },
+          "end_time": {
+            "type": "string"
+          },
+          "discount_types": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        }
+      }
+    },
+    "product_code": {
+      "type": "string"
+    },
+    "product_id": {
+      "type": "string"
+    },
+    "purchasable": {
+      "type": "boolean"
+    },
+    "giftable": {
+      "type": "boolean"
+    },
+    "rewards": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "tags": {
+      "items": {
+        "type": "string"
+      },
+      "type": "array"
+    },
+    "title_code": {
+      "type": "string"
+    },
+    "visible": {
+      "type": "boolean"
+    }
+  }
+}

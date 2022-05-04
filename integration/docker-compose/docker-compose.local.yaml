@@ -1,0 +1,11 @@
+version: '3'
+#Docker compose for local snitch setup
+services:
+  clickhouse:
+    ports:
+      - '9000:9000/tcp'
+      - '8123:8123/tcp'
+
+  snitch:
+    ports:
+      - '55555:55555/udp'

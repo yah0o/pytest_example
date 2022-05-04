@@ -1,0 +1,171 @@
+{
+  "$schema": "http://json-schema.org/draft-04/schema#",
+  "definitions": {},
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "pss",
+    "wgpm"
+  ],
+  "properties": {
+    "pss": {
+      "type": "object",
+      "additionalProperties": false
+    },
+    "wot": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "receipt": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "wgpm": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "some_string",
+        "some_integer",
+        "some_boolean",
+        "inner_string_key",
+        "nested_dictionary",
+        "list_with_dictionaries"
+      ],
+      "properties": {
+        "some_string": {
+          "required": [
+            "@type",
+            "data"
+          ],
+          "additionalProperties": false,
+          "type": "object",
+          "properties": {
+            "@type": {
+              "type": "string",
+              "enum": [
+                "String"
+              ]
+            },
+            "data": {
+              "type": "string"
+            }
+          }
+        },
+        "some_integer": {
+          "required": [
+            "@type",
+            "data"
+          ],
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "@type": {
+              "type": "string",
+              "enum": [
+                "Integer"
+              ]
+            },
+            "data": {
+              "type": "integer"
+            }
+          }
+        },
+        "some_boolean": {
+          "required": [
+            "@type",
+            "data"
+          ],
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "@type": {
+              "type": "string",
+              "enum": [
+                "Boolean"
+              ]
+            },
+            "data": {
+              "type": "boolean"
+            }
+          }
+        },
+        "outer_string_key": {
+          "type": "string",
+          "enum": [
+            "outer_string_value"
+          ]
+        },
+        "inner_string_key": {
+          "type": "string",
+          "enum": [
+            "inner_string_value"
+          ]
+        },
+        "nested_dictionary": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "nested_key",
+            "x2_nested_dictionary",
+            "x2_nested_list"
+          ],
+          "properties": {
+            "nested_key": {
+              "type": "string",
+              "enum": [
+                "nested_value"
+              ]
+            },
+            "x2_nested_dictionary": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "x2_nested_key"
+              ],
+              "properties": {
+                "x2_nested_key": {
+                  "type": "string",
+                  "enum": [
+                    "x2_nested_value"
+                  ]
+                }
+              }
+            },
+            "x2_nested_list": {
+              "type": "array",
+              "items": [
+                {
+                  "type": "string",
+                  "enum": [
+                    "foo",
+                    "bar"
+                  ]
+                }
+              ]
+            }
+          }
+        },
+        "list_with_dictionaries": {
+          "type": "array",
+          "items": [
+            {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "listed_dict_key"
+              ],
+              "properties": {
+                "listed_dict_key": {
+                  "type": "string",
+                  "enum": [
+                    "listed_dict_value"
+                  ]
+                }
+              }
+            }
+          ]
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,124 @@
+{
+  "$schema": "http://json-schema.org/draft-06/schema#",
+  "definitions": {},
+  "id": "http://example.com/example.json",
+  "type": "object",
+  "required": [
+    "title",
+    "api",
+    "url"
+  ],
+  "properties": {
+    "api": {
+      "id": "/properties/api",
+      "additionalProperties": false,
+      "type": "object",
+      "required": [
+        "key"
+      ],
+      "properties": {
+        "key": {
+          "examples": [
+            "7b3bff14-9f38-4c49-b169-581842d7ec80"
+          ],
+          "id": "/properties/api/properties/key",
+          "type": "string"
+        }
+      }
+    },
+    "region": {
+      "examples": [
+        "ex1"
+      ],
+      "id": "/properties/region",
+      "type": "string"
+    },
+    "title": {
+      "examples": [
+        "titles/np.test.yaml"
+      ],
+      "id": "/properties/title",
+      "type": "string"
+    },
+    "url": {
+      "id": "/properties/url",
+      "type": "object",
+      "required": [
+        "base"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "base": {
+          "examples": [
+            "http://us4-discoverer-latest.corp.wargaming.local/"
+          ],
+          "id": "/properties/url/properties/base",
+          "type": "string"
+        },
+        "services": {
+          "additionalProperties": false,
+          "id": "/properties/url/properties/test_urls",
+          "type": "object",
+          "properties": {
+            "auth": {
+              "examples": [
+                "http://localhost:8080/"
+              ],
+              "id": "/properties/url/properties/test_urls/properties/server",
+              "title": "The server schema.",
+              "type": "string"
+            },
+            "inventory": {
+              "examples": [
+                "http://localhost:8080/"
+              ],
+              "id": "/properties/url/properties/test_urls/properties/server",
+              "title": "The server schema.",
+              "type": "string"
+            },
+            "product": {
+              "examples": [
+                "http://localhost:8080/"
+              ],
+              "id": "/properties/url/properties/test_urls/properties/server",
+              "title": "The server schema.",
+              "type": "string"
+            },
+            "server": {
+              "examples": [
+                "http://localhost:8080/"
+              ],
+              "id": "/properties/url/properties/test_urls/properties/server",
+              "title": "The server schema.",
+              "type": "string"
+            },
+            "titleconfig": {
+              "examples": [
+                "http://localhost:8080/"
+              ],
+              "id": "/properties/url/properties/test_urls/properties/server",
+              "title": "The server schema.",
+              "type": "string"
+            },
+            "tools": {
+              "examples": [
+                "http://localhost:8080/"
+              ],
+              "id": "/properties/url/properties/test_urls/properties/server",
+              "title": "The server schema.",
+              "type": "string"
+            },
+            "admin-tools": {
+              "examples": [
+                "http://localhost:8080/"
+              ],
+              "id": "/properties/url/properties/test_urls/properties/server",
+              "title": "The server schema.",
+              "type": "string"
+            }
+          }
+        }
+      }
+    }
+  }
+}
